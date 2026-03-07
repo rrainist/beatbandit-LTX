@@ -23,12 +23,13 @@ This overlay was produced against upstream `LTX-Desktop` base commit:
 3. Review `CHANGED_FILES.txt` and `beatbandit-LTX-overlay.patch`.
 4. Copy the files from this repository into the root of your LTX Desktop clone.
 5. Overwrite existing files when prompted.
-6. Install dependencies if needed:
+6. Install dependencies if needed (use `pnpm` or `npm`):
    - `pnpm install`
+   - in backend folder, `uv sync --extra dev`
 7. Optionally verify:
    - `pnpm run typecheck:ts`
    - `pnpm dlx tsx frontend/test/beatbandit-import.smoke.ts`
-8. Build LTX Desktop normally from your patched checkout.
+8. Build LTX Desktop normally from your patched checkout, or simply run `pnpm dev` to start it. 
 
 ## Main Changes
 
