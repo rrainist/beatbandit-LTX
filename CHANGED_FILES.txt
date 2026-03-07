@@ -1,3 +1,5 @@
+backend/runtime_config/runtime_policy.py
+backend/tests/test_runtime_policy_decision.py
 electron/ipc/beatbandit-handlers.ts
 electron/main.ts
 electron/preload.ts

@@ -39,6 +39,7 @@ This overlay was produced against upstream `LTX-Desktop` base commit:
 - Multi-lane import option so each shot can be duplicated across `V1..V5`
 - Regeneration fixes so BeatBandit placeholder images become proper video assets
 - Clearer validation error messaging for failed generations
+- Windows local video generation threshold lowered to `20 GB` VRAM for CUDA systems
 
 ## Notes
 

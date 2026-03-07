@@ -8631,3 +8631,38 @@ index 41f2673..a13c844 100644
      engines: {node: '>=10'}
  
  snapshots:
+diff --git a/backend/runtime_config/runtime_policy.py b/backend/runtime_config/runtime_policy.py
+index cf64b66..c6e20ef 100644
+--- a/backend/runtime_config/runtime_policy.py
++++ b/backend/runtime_config/runtime_policy.py
+@@ -13,7 +13,7 @@ def decide_force_api_generations(system: str, cuda_available: bool, vram_gb: int
+             return True
+         if vram_gb is None:
+             return True
+-        return vram_gb < 31
++        return vram_gb < 20
+ 
+     # Fail closed for non-target platforms unless explicitly relaxed.
+     return True
+diff --git a/backend/tests/test_runtime_policy_decision.py b/backend/tests/test_runtime_policy_decision.py
+index 0999f70..7116cfc 100644
+--- a/backend/tests/test_runtime_policy_decision.py
++++ b/backend/tests/test_runtime_policy_decision.py
+@@ -15,7 +15,7 @@ def test_windows_without_cuda_forces_api() -> None:
+ 
+ 
+ def test_windows_with_low_vram_forces_api() -> None:
+-    assert decide_force_api_generations(system="Windows", cuda_available=True, vram_gb=30) is True
++    assert decide_force_api_generations(system="Windows", cuda_available=True, vram_gb=19) is True
+ 
+ 
+ def test_windows_with_unknown_vram_forces_api() -> None:
+@@ -23,7 +23,7 @@ def test_windows_with_unknown_vram_forces_api() -> None:
+ 
+ 
+ def test_windows_with_required_vram_allows_local_mode() -> None:
+-    assert decide_force_api_generations(system="Windows", cuda_available=True, vram_gb=31) is False
++    assert decide_force_api_generations(system="Windows", cuda_available=True, vram_gb=20) is False
+ 
+ 
+ def test_other_systems_fail_closed() -> None:
