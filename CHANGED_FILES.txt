@@ -1,0 +1,17 @@
+electron/ipc/beatbandit-handlers.ts
+electron/main.ts
+electron/preload.ts
+frontend/components/BeatBanditBatchGenerateModal.tsx
+frontend/components/GenerationErrorDialog.tsx
+frontend/components/ImportBeatBanditProjectModal.tsx
+frontend/contexts/ProjectContext.tsx
+frontend/lib/beatbandit-import.ts
+frontend/test/beatbandit-import.smoke.ts
+frontend/types/project.ts
+frontend/views/Home.tsx
+frontend/views/VideoEditor.tsx
+frontend/views/editor/buildMenuDefinitions.ts
+frontend/views/editor/useRegeneration.ts
+frontend/vite-env.d.ts
+package.json
+pnpm-lock.yaml
