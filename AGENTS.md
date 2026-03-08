@@ -92,6 +92,13 @@ Key patterns:
 - Pyright strict mode (`backend/pyrightconfig.json`)
 - Dependencies in `backend/pyproject.toml`
 
+## BeatBandit Import
+
+- **Import module**: `frontend/lib/beatbandit-import.ts` — parses BeatBandit LTX packages and creates LTX Desktop projects
+- **Compact prompt preference**: When a shot has `compact_video_prompt`, the importer uses it as the primary prompt for generation; otherwise falls back to `t2v_prompt` or the primary reference asset's prompt
+- **Import metadata**: `AssetImportMeta` includes `beatbanditOriginalPrompt` and `beatbanditCompactPrompt` so both prompts are retained for reference
+- **Helpers**: `getPreferredBeatBanditPrompt`, `getBeatBanditFullPrompt`, `getBeatBanditCompactPrompt` — use these when resolving which prompt to show or use for regeneration
+
 ## Key File Locations
 
 - Backend architecture doc: `backend/architecture.md`
@@ -99,3 +106,4 @@ Key patterns:
 - Electron builder config: `electron-builder.yml`
 - Video editor (largest frontend file): `frontend/views/VideoEditor.tsx`
 - Project types: `frontend/types/project.ts`
+- BeatBandit import: `frontend/lib/beatbandit-import.ts`
