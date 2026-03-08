@@ -278,8 +278,9 @@ function normalizeLaneCount(value: number | undefined): number {
   return Math.max(1, Math.min(5, Math.round(value)))
 }
 
-function createMediaTracks(videoTrackCount: number = 1): Track[] {
+function createMediaTracks(videoTrackCount: number = 1, audioTrackCount: number = videoTrackCount): Track[] {
   const normalizedVideoTrackCount = Math.max(3, Math.round(videoTrackCount))
+  const normalizedAudioTrackCount = Math.max(2, Math.round(audioTrackCount))
   const defaultVideoTracks = DEFAULT_TRACKS.filter(track => track.kind === 'video')
   const defaultAudioTracks = DEFAULT_TRACKS.filter(track => track.kind === 'audio')
 
@@ -298,24 +299,40 @@ function createMediaTracks(videoTrackCount: number = 1): Track[] {
     }
   })
 
-  return [...videoTracks, ...defaultAudioTracks.map(track => ({ ...track }))]
+  const audioTracks = Array.from({ length: normalizedAudioTrackCount }, (_, index) => {
+    const baseTrack = defaultAudioTracks[index]
+    if (baseTrack) {
+      return { ...baseTrack }
+    }
+    return {
+      id: `track-a${index + 1}`,
+      name: `A${index + 1}`,
+      muted: false,
+      locked: false,
+      sourcePatched: false,
+      kind: 'audio' as const,
+    }
+  })
+
+  return [...videoTracks, ...audioTracks]
 }
 
 function withSubtitleTrackIfNeeded(
   clips: TimelineClip[],
   subtitles: SubtitleClip[],
   videoTrackCount: number,
+  audioTrackCount: number,
 ): { tracks: Track[]; clips: TimelineClip[]; subtitles: SubtitleClip[] } {
   if (subtitles.length === 0) {
     return {
-      tracks: createMediaTracks(videoTrackCount),
+      tracks: createMediaTracks(videoTrackCount, audioTrackCount),
       clips,
       subtitles,
     }
   }
 
   return {
-    tracks: [createSubtitleTrack(), ...createMediaTracks(videoTrackCount)],
+    tracks: [createSubtitleTrack(), ...createMediaTracks(videoTrackCount, audioTrackCount)],
     clips: clips.map(clip => ({ ...clip, trackIndex: clip.trackIndex + 1 })),
     subtitles: subtitles.map(subtitle => ({ ...subtitle, trackIndex: 0 })),
   }
@@ -383,6 +400,44 @@ function createTimelineClip(
     colorCorrection: { ...DEFAULT_COLOR_CORRECTION },
     opacity: 100,
     colorLabel,
+    beatbanditVariantKey,
+    beatbanditLaneIndex,
+  }
+}
+
+function createAudioTimelineClip(
+  id: string,
+  asset: Asset,
+  startTime: number,
+  duration: number,
+  trackIndex: number,
+  linkedVideoClipId: string,
+  colorLabel: string,
+  beatbanditVariantKey: string,
+  beatbanditLaneIndex: number,
+): TimelineClip {
+  return {
+    id,
+    assetId: asset.id,
+    type: 'audio',
+    startTime,
+    duration,
+    trimStart: 0,
+    trimEnd: 0,
+    speed: 1,
+    reversed: false,
+    muted: false,
+    volume: 1,
+    trackIndex,
+    asset,
+    flipH: false,
+    flipV: false,
+    transitionIn: { type: 'none', duration: 0 },
+    transitionOut: { type: 'none', duration: 0 },
+    colorCorrection: { ...DEFAULT_COLOR_CORRECTION },
+    opacity: 100,
+    colorLabel,
+    linkedClipIds: [linkedVideoClipId],
     beatbanditVariantKey,
     beatbanditLaneIndex,
   }
@@ -697,15 +752,37 @@ export async function buildBeatBanditImportProject(
       }
 
       for (let laneIndex = 0; laneIndex < laneCount; laneIndex += 1) {
-        clips.push(createTimelineClip(
+        const beatbanditVariantKey = `${shot.id}:lane:${laneIndex + 1}`
+        const videoClipId = createId('clip')
+        const timelineClip = createTimelineClip(
           preparedShot.selectedAsset,
           currentTime,
           preparedShot.durationSeconds,
           preparedShot.colorLabel,
           laneIndex,
-          `${shot.id}:lane:${laneIndex + 1}`,
+          beatbanditVariantKey,
           laneIndex + 1,
-        ))
+        )
+        timelineClip.id = videoClipId
+
+        if (preparedShot.selectedAsset.type === 'video') {
+          const audioClipId = createId('clip')
+          timelineClip.linkedClipIds = [audioClipId]
+          clips.push(timelineClip)
+          clips.push(createAudioTimelineClip(
+            audioClipId,
+            preparedShot.selectedAsset,
+            currentTime,
+            preparedShot.durationSeconds,
+            laneCount + laneIndex,
+            videoClipId,
+            preparedShot.colorLabel,
+            beatbanditVariantKey,
+            laneIndex + 1,
+          ))
+        } else {
+          clips.push(timelineClip)
+        }
       }
 
       if (preparedShot.dialogue) {
@@ -715,7 +792,7 @@ export async function buildBeatBanditImportProject(
       currentTime += preparedShot.durationSeconds
     }
 
-    const normalized = withSubtitleTrackIfNeeded(clips, subtitles, laneCount)
+    const normalized = withSubtitleTrackIfNeeded(clips, subtitles, laneCount, laneCount)
     return {
       ...baseTimeline,
       tracks: normalized.tracks,

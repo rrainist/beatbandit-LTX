@@ -28,7 +28,7 @@ import { ImportTimelineModal } from '../components/ImportTimelineModal'
 import { ClipWaveform } from '../components/AudioWaveform'
 // IC-LORA HIDDEN - import { ICLoraPanel } from '../components/ICLoraPanel'
 import type { Asset, TimelineClip, Track, SubtitleClip } from '../types/project' // EFFECTS HIDDEN: removed EffectType
-import { DEFAULT_TRACKS } from '../types/project' // EFFECTS HIDDEN: removed EFFECT_DEFINITIONS
+import { DEFAULT_COLOR_CORRECTION, DEFAULT_TRACKS } from '../types/project' // EFFECTS HIDDEN: removed EFFECT_DEFINITIONS
 import type { GenerationSettings } from '../components/SettingsPanel'
 import {
   type ToolType, PRIMARY_TOOLS, TRIM_TOOLS,
@@ -92,6 +92,16 @@ interface BeatBanditBatchFailure {
   jobKey: string
   label: string
   error: string
+}
+
+function createBeatBanditAudioTrack(trackNumber: number): Track {
+  return {
+    id: `track-${Date.now()}-audio-${trackNumber}-${Math.random().toString(36).slice(2, 8)}`,
+    name: `A${trackNumber}`,
+    muted: false,
+    locked: false,
+    kind: 'audio',
+  }
 }
 
 export function VideoEditor() {
@@ -546,6 +556,107 @@ export function VideoEditor() {
     project: buildBeatBanditBatchJobs('project').length,
   }), [buildBeatBanditBatchJobs])
 
+  const ensureBeatBanditAudioForVideoClip = useCallback((
+    timelineTracks: Track[],
+    timelineClips: TimelineClip[],
+    videoClip: TimelineClip,
+    generatedAsset: Asset,
+  ): { tracks: Track[]; clips: TimelineClip[] } => {
+    const laneIndex = Math.max(0, (videoClip.beatbanditLaneIndex ?? 1) - 1)
+    let nextTracks = [...timelineTracks]
+    let audioTrackIndexes = nextTracks
+      .map((track, index) => (track.kind === 'audio' ? index : -1))
+      .filter(index => index >= 0)
+
+    while (audioTrackIndexes.length <= laneIndex) {
+      nextTracks.push(createBeatBanditAudioTrack(audioTrackIndexes.length + 1))
+      audioTrackIndexes = nextTracks
+        .map((track, index) => (track.kind === 'audio' ? index : -1))
+        .filter(index => index >= 0)
+    }
+
+    const targetAudioTrackIndex = audioTrackIndexes[laneIndex] ?? audioTrackIndexes[0] ?? -1
+    if (targetAudioTrackIndex < 0) {
+      return { tracks: nextTracks, clips: timelineClips }
+    }
+
+    const existingAudioClip = (videoClip.linkedClipIds || [])
+      .map(id => timelineClips.find(clip => clip.id === id && clip.type === 'audio'))
+      .find(Boolean) || null
+    const audioClipId = existingAudioClip?.id || `clip-${Date.now()}-a-${Math.random().toString(36).slice(2, 9)}`
+
+    const updatedVideoClip: TimelineClip = {
+      ...videoClip,
+      linkedClipIds: [...new Set([...(videoClip.linkedClipIds || []), audioClipId])],
+    }
+
+    let audioClipFound = false
+    const nextClips = timelineClips.map((clip) => {
+      if (clip.id === updatedVideoClip.id) {
+        return updatedVideoClip
+      }
+      if (clip.id !== audioClipId) {
+        return clip
+      }
+      audioClipFound = true
+      return {
+        ...clip,
+        assetId: generatedAsset.id,
+        asset: generatedAsset,
+        type: 'audio',
+        startTime: updatedVideoClip.startTime,
+        duration: updatedVideoClip.duration,
+        trimStart: 0,
+        trimEnd: 0,
+        speed: 1,
+        reversed: false,
+        muted: false,
+        volume: clip.volume ?? 1,
+        trackIndex: targetAudioTrackIndex,
+        linkedClipIds: [updatedVideoClip.id],
+        colorLabel: updatedVideoClip.colorLabel,
+        beatbanditVariantKey: updatedVideoClip.beatbanditVariantKey,
+        beatbanditLaneIndex: updatedVideoClip.beatbanditLaneIndex,
+      } satisfies TimelineClip
+    })
+
+    if (audioClipFound) {
+      return { tracks: nextTracks, clips: nextClips }
+    }
+
+    return {
+      tracks: nextTracks,
+      clips: [
+        ...nextClips,
+        {
+          id: audioClipId,
+          assetId: generatedAsset.id,
+          type: 'audio',
+          startTime: updatedVideoClip.startTime,
+          duration: updatedVideoClip.duration,
+          trimStart: 0,
+          trimEnd: 0,
+          speed: 1,
+          reversed: false,
+          muted: false,
+          volume: 1,
+          trackIndex: targetAudioTrackIndex,
+          asset: generatedAsset,
+          flipH: false,
+          flipV: false,
+          transitionIn: { type: 'none', duration: 0 },
+          transitionOut: { type: 'none', duration: 0 },
+          colorCorrection: { ...DEFAULT_COLOR_CORRECTION },
+          opacity: 100,
+          linkedClipIds: [updatedVideoClip.id],
+          colorLabel: updatedVideoClip.colorLabel,
+          beatbanditVariantKey: updatedVideoClip.beatbanditVariantKey,
+          beatbanditLaneIndex: updatedVideoClip.beatbanditLaneIndex,
+        },
+      ],
+    }
+  }, [])
+
   useEffect(() => {
     const pending = beatBanditBatchResolverRef.current
     if (!pending || isRegenerating) return
@@ -612,23 +723,42 @@ export function VideoEditor() {
       isRegenerating: false,
     })
 
-    setClips(prev => prev.map(clip => shouldReplaceClip(clip) ? toGeneratedClip(clip) : clip))
+    setClips(prev => {
+      const replacedClips = prev.map(clip => shouldReplaceClip(clip) ? toGeneratedClip(clip) : clip)
+      const targetVideoClip = replacedClips.find(clip => shouldReplaceClip(clip) && clip.type === 'video')
+      if (!targetVideoClip) return replacedClips
+      return ensureBeatBanditAudioForVideoClip(tracks, replacedClips, targetVideoClip, generatedAsset).clips
+    })
+    setTracks(prev => {
+      const replacedClips = clips.map(clip => shouldReplaceClip(clip) ? toGeneratedClip(clip) : clip)
+      const targetVideoClip = replacedClips.find(clip => shouldReplaceClip(clip) && clip.type === 'video')
+      if (!targetVideoClip) return prev
+      return ensureBeatBanditAudioForVideoClip(prev, replacedClips, targetVideoClip, generatedAsset).tracks
+    })
 
     const activeTimelineIdForWrite = loadedTimelineIdRef.current
     for (const timeline of timelines) {
       if (timeline.id === activeTimelineIdForWrite) continue
       let changed = false
-      const nextClips = (timeline.clips || []).map((rawClip) => {
+      const replacedClips = (timeline.clips || []).map((rawClip) => {
         const clip = rawClip as TimelineClip
         if (!shouldReplaceClip(clip)) return rawClip
         changed = true
         return toGeneratedClip(clip)
       })
       if (changed) {
-        updateTimeline(currentProjectId, timeline.id, { clips: nextClips as TimelineClip[] })
+        const targetVideoClip = (replacedClips as TimelineClip[]).find(clip => shouldReplaceClip(clip) && clip.type === 'video')
+        if (!targetVideoClip) continue
+        const { tracks: nextTracks, clips: nextClips } = ensureBeatBanditAudioForVideoClip(
+          timeline.tracks || [],
+          replacedClips as TimelineClip[],
+          targetVideoClip,
+          generatedAsset,
+        )
+        updateTimeline(currentProjectId, timeline.id, { tracks: nextTracks, clips: nextClips })
       }
     }
-  }, [currentProjectId, getBatchClipAsset, timelines, updateTimeline])
+  }, [clips, currentProjectId, ensureBeatBanditAudioForVideoClip, getBatchClipAsset, setTracks, timelines, tracks, updateTimeline])
 
   const runBeatBanditBatchJobs = useCallback(async (jobs: BeatBanditBatchJob[]) => {
     if (!currentProjectId) return
@@ -3432,7 +3562,14 @@ export function VideoEditor() {
                           </>
                         ) : clip.asset && (
                           clip.asset.type === 'video' ? (
-                            <video key={`thumb-${clip.id}-${clip.takeIndex ?? 'default'}`} src={getClipUrl(clip) || clip.asset.url} className="h-8 aspect-video object-cover rounded" muted />
+                            (() => {
+                              const clipUrl = getClipUrl(clip) || clip.asset!.url
+                              const thumbnailSrc = thumbnailMap[clipUrl]
+                              if (thumbnailSrc) {
+                                return <img key={`thumb-${clip.id}-${clip.takeIndex ?? 'default'}`} src={thumbnailSrc} alt="" className="h-8 aspect-video object-cover rounded" />
+                              }
+                              return <video key={`thumb-${clip.id}-${clip.takeIndex ?? 'default'}`} src={clipUrl} className="h-8 aspect-video object-cover rounded" muted />
+                            })()
                           ) : (
                             <img key={`thumb-${clip.id}-${clip.takeIndex ?? 'default'}`} src={getClipUrl(clip) || clip.asset.url} alt="" className="h-8 aspect-video object-cover rounded" />
                           )
