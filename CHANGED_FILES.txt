@@ -6,6 +6,7 @@ electron/main.ts
 electron/preload.ts
 frontend/components/BeatBanditBatchGenerateModal.tsx
 frontend/components/GenerationErrorDialog.tsx
+frontend/components/SettingsPanel.tsx
 frontend/components/ImportBeatBanditProjectModal.tsx
 frontend/contexts/ProjectContext.tsx
 frontend/lib/beatbandit-import.ts

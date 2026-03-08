@@ -132,6 +132,7 @@ export function BeatBanditBatchGenerateModal({
                 onSettingsChange={onSettingsChange}
                 mode="text-to-video"
                 forceApiGenerations={forceApiGenerations}
+                hideDuration
               />
             </div>
           )}
