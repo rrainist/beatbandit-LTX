@@ -60,6 +60,7 @@ interface BeatBanditShot {
   dialogue?: string
   movement?: string
   t2v_prompt?: string
+  compact_video_prompt?: string
   selected_still_asset_id?: string
   selected_video_asset_id?: string
   primary_reference_asset_id?: string
@@ -233,6 +234,18 @@ function getDurationSeconds(duration?: number): number {
   return typeof duration === 'number' && Number.isFinite(duration) && duration > 0
     ? duration
     : DEFAULT_DURATION_SECONDS
+}
+
+function getBeatBanditFullPrompt(shot?: BeatBanditShot, assetPrompt?: string): string {
+  return shot?.t2v_prompt?.trim() || assetPrompt?.trim() || ''
+}
+
+function getBeatBanditCompactPrompt(shot?: BeatBanditShot): string {
+  return shot?.compact_video_prompt?.trim() || ''
+}
+
+function getPreferredBeatBanditPrompt(shot?: BeatBanditShot, assetPrompt?: string): string {
+  return getBeatBanditCompactPrompt(shot) || assetPrompt?.trim() || shot?.t2v_prompt?.trim() || ''
 }
 
 function getCameraMotionValue(movement?: string): string {
@@ -485,7 +498,11 @@ function createImportMeta(
   projectId: string | undefined,
   shotId: string | undefined,
   assetId: string,
-  options?: { beatbanditUseAsInputImage?: boolean },
+  options?: {
+    beatbanditUseAsInputImage?: boolean
+    beatbanditOriginalPrompt?: string
+    beatbanditCompactPrompt?: string
+  },
 ): AssetImportMeta {
   return {
     source: 'beatbandit',
@@ -493,6 +510,8 @@ function createImportMeta(
     ...(shotId ? { beatbanditShotId: shotId } : {}),
     beatbanditAssetId: assetId,
     ...(options?.beatbanditUseAsInputImage !== undefined ? { beatbanditUseAsInputImage: options.beatbanditUseAsInputImage } : {}),
+    ...(options?.beatbanditOriginalPrompt ? { beatbanditOriginalPrompt: options.beatbanditOriginalPrompt } : {}),
+    ...(options?.beatbanditCompactPrompt ? { beatbanditCompactPrompt: options.beatbanditCompactPrompt } : {}),
   }
 }
 
@@ -625,8 +644,11 @@ export async function buildBeatBanditImportProject(
       fallbackResolution,
     )
     const useAsInputImage = shouldUseShotStillAsInputImage(assetRecord, shot)
+    const originalPrompt = getBeatBanditFullPrompt(shot, assetRecord.prompt)
+    const compactPrompt = getBeatBanditCompactPrompt(shot)
+    const preferredPrompt = getPreferredBeatBanditPrompt(shot, assetRecord.prompt)
     const generationParams = getGenerationParams({
-      prompt: assetRecord.prompt || shot?.t2v_prompt || '',
+      prompt: preferredPrompt,
       durationSeconds,
       resolution: assetResolution,
       fps,
@@ -639,7 +661,7 @@ export async function buildBeatBanditImportProject(
       type: assetRecord.kind === 'shot_video' ? 'video' : 'image',
       path: resolved.filePath,
       url: resolved.fileUrl,
-      prompt: assetRecord.prompt || shot?.t2v_prompt || '',
+      prompt: preferredPrompt,
       resolution: assetResolution,
       duration: assetRecord.kind === 'shot_video' ? durationSeconds : undefined,
       createdAt: Date.now(),
@@ -648,6 +670,8 @@ export async function buildBeatBanditImportProject(
       generationParams,
       importMeta: createImportMeta(projectId, shotId, assetRecord.id, {
         beatbanditUseAsInputImage: assetRecord.kind === 'shot_still' ? useAsInputImage : undefined,
+        beatbanditOriginalPrompt: originalPrompt,
+        beatbanditCompactPrompt: compactPrompt,
       }),
     }
 
@@ -708,18 +732,21 @@ export async function buildBeatBanditImportProject(
 
     if (!selectedAsset && primaryReference) {
       const placeholderAssetId = `bb-shot-placeholder-${shot.id}`
+      const originalPrompt = getBeatBanditFullPrompt(shot, primaryReference.prompt)
+      const compactPrompt = getBeatBanditCompactPrompt(shot)
+      const preferredPrompt = compactPrompt || shot.t2v_prompt?.trim() || primaryReference.prompt || ''
       const placeholderAsset: Asset = {
         id: placeholderAssetId,
         type: 'image',
         path: primaryReference.path,
         url: primaryReference.url,
-        prompt: shot.t2v_prompt || primaryReference.prompt || '',
+        prompt: preferredPrompt,
         resolution: primaryReference.resolution || fallbackResolution,
         createdAt: Date.now(),
         thumbnail: primaryReference.thumbnail || primaryReference.url,
         bin: sceneDisplayName,
         generationParams: getGenerationParams({
-          prompt: shot.t2v_prompt || primaryReference.prompt || '',
+          prompt: preferredPrompt,
           durationSeconds,
           resolution: primaryReference.resolution || fallbackResolution,
           fps,
@@ -728,6 +755,8 @@ export async function buildBeatBanditImportProject(
         }),
         importMeta: createImportMeta(projectId, shot.id, placeholderAssetId, {
           beatbanditUseAsInputImage: true,
+          beatbanditOriginalPrompt: originalPrompt,
+          beatbanditCompactPrompt: compactPrompt,
         }),
       }
 
@@ -745,7 +774,7 @@ export async function buildBeatBanditImportProject(
         ? (primaryReference?.url || null)
         : undefined
       stillAsset.generationParams = getGenerationParams({
-        prompt: shot.t2v_prompt || stillAsset.prompt,
+        prompt: getPreferredBeatBanditPrompt(shot, stillAsset.prompt),
         durationSeconds,
         resolution: stillAsset.resolution || fallbackResolution,
         fps,
@@ -761,7 +790,7 @@ export async function buildBeatBanditImportProject(
         ? (primaryReference?.url || null)
         : undefined
       videoAsset.generationParams = getGenerationParams({
-        prompt: shot.t2v_prompt || videoAsset.prompt,
+        prompt: getPreferredBeatBanditPrompt(shot, videoAsset.prompt),
         durationSeconds,
         resolution: videoAsset.resolution || fallbackResolution,
         fps,

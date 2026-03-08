@@ -115,7 +115,9 @@ async function testCompleteImport(): Promise<void> {
 
   const firstStill = result.project.assets.find(asset => asset.id === 'asset_still_001')
   assert.ok(firstStill?.generationParams)
+  assert.equal(firstStill?.prompt, 'Cinematic cafe interior with Maya entering frame.')
   assert.equal(firstStill?.generationParams?.mode, 'image-to-video')
+  assert.equal(firstStill?.generationParams?.prompt, 'Cinematic cafe interior with Maya entering frame.')
   assert.equal(firstStill?.generationParams?.inputImageUrl, 'file:///C:/Imports/BeatBandit Demo/assets/shots/stills/shot_001.png')
   assert.equal(firstStill?.generationParams?.cameraMotion, 'dolly_in')
   assert.equal(result.warnings.length, 0)
@@ -245,6 +247,72 @@ async function testReferenceOnlyShotFallback(): Promise<void> {
   assert.equal(placeholderAsset?.generationParams?.inputImageUrl, 'file:///C:/Imports/BeatBandit Reference Fallback/assets/references/characters/maya.png')
   assert.equal(placeholderAsset?.bin, 'Scene 20: INT. LAB - NIGHT')
   assert.equal(result.warnings.length, 0)
+}
+
+async function testCompactPromptPreferredOnImport(): Promise<void> {
+  const basePath = 'C:\\Imports\\BeatBandit Compact Prompt'
+  const existingPaths = [
+    `${basePath}\\assets\\shots\\stills\\shot_100.png`,
+  ]
+
+  ;(globalThis as any).window = {
+    electronAPI: {
+      checkFilesExist: createCheckFilesExist(existingPaths),
+    },
+  }
+
+  const result = await buildBeatBanditImportProject({
+    schema_version: '1.0.0',
+    project: {
+      id: 'bb-project-compact',
+      name: 'Compact Prompt Story',
+      default_fps: 24,
+      default_resolution: '1920x1080',
+    },
+    scenes: [
+      { id: 'scene_025', name: 'INT. WAREHOUSE - NIGHT', position: 1000, scene_number: 25 },
+    ],
+    shots: [
+      {
+        id: 'shot_100',
+        scene_id: 'scene_025',
+        position: 1000,
+        duration_seconds: 5,
+        movement: 'Slow dolly in',
+        t2v_prompt: 'Full BeatBandit prompt with rich static detail.',
+        compact_video_prompt: 'The camera tracks Maya as she slips between crates and turns toward the exit. A slow push in lands on her tense look while the alarm echoes in the space.',
+        selected_still_asset_id: 'asset_still_100',
+      },
+    ],
+    assets: [
+      {
+        id: 'asset_still_100',
+        kind: 'shot_still',
+        path: 'assets/shots/stills/shot_100.png',
+        width: 1920,
+        height: 1080,
+        source_shot_id: 'shot_100',
+        prompt: 'Full BeatBandit prompt with rich static detail.',
+      },
+    ],
+    references: [],
+  }, basePath)
+
+  const importedStill = result.project.assets.find(asset => asset.id === 'asset_still_100')
+  assert.ok(importedStill)
+  assert.equal(
+    importedStill?.prompt,
+    'The camera tracks Maya as she slips between crates and turns toward the exit. A slow push in lands on her tense look while the alarm echoes in the space.',
+  )
+  assert.equal(
+    importedStill?.generationParams?.prompt,
+    'The camera tracks Maya as she slips between crates and turns toward the exit. A slow push in lands on her tense look while the alarm echoes in the space.',
+  )
+  assert.equal(importedStill?.importMeta?.beatbanditOriginalPrompt, 'Full BeatBandit prompt with rich static detail.')
+  assert.equal(
+    importedStill?.importMeta?.beatbanditCompactPrompt,
+    'The camera tracks Maya as she slips between crates and turns toward the exit. A slow push in lands on her tense look while the alarm echoes in the space.',
+  )
 }
 
 async function testLaneDuplicationImport(): Promise<void> {
@@ -387,6 +455,7 @@ async function main(): Promise<void> {
   await testCompleteImport()
   await testDegradedImport()
   await testReferenceOnlyShotFallback()
+  await testCompactPromptPreferredOnImport()
   await testLaneDuplicationImport()
   await testSharedPlaceholderStillUsesTextToVideo()
   console.log('BeatBandit import smoke tests passed')

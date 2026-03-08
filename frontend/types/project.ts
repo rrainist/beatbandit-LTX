@@ -34,6 +34,8 @@ export interface AssetImportMeta {
   beatbanditShotId?: string
   beatbanditAssetId?: string
   beatbanditUseAsInputImage?: boolean
+  beatbanditOriginalPrompt?: string
+  beatbanditCompactPrompt?: string
 }
 
 export interface Asset {
