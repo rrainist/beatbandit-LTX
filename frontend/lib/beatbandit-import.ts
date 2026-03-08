@@ -77,6 +77,8 @@ interface BeatBanditAssetRecord {
   duration_seconds?: number
   source_shot_id?: string
   prompt?: string
+  provider_model?: string
+  source_reference_asset_id?: string
 }
 
 interface BeatBanditReferenceRecord {
@@ -346,6 +348,7 @@ function getGenerationParams({
   movement,
   still,
   primaryReference,
+  inputImageUrl,
 }: {
   prompt: string
   durationSeconds: number
@@ -354,11 +357,14 @@ function getGenerationParams({
   movement?: string
   still?: Asset
   primaryReference?: Asset
+  inputImageUrl?: string | null
 }): GenerationParams {
-  const inputImageUrl = still?.url || primaryReference?.url
+  const resolvedInputImageUrl = inputImageUrl !== undefined
+    ? (inputImageUrl || undefined)
+    : (still?.url || primaryReference?.url)
 
   return {
-    mode: inputImageUrl ? 'image-to-video' : 'text-to-video',
+    mode: resolvedInputImageUrl ? 'image-to-video' : 'text-to-video',
     prompt,
     model: '',
     duration: durationSeconds,
@@ -366,7 +372,7 @@ function getGenerationParams({
     fps,
     audio: false,
     cameraMotion: getCameraMotionValue(movement),
-    ...(inputImageUrl ? { inputImageUrl } : {}),
+    ...(resolvedInputImageUrl ? { inputImageUrl: resolvedInputImageUrl } : {}),
   }
 }
 
@@ -475,12 +481,18 @@ async function resolveFiles(basePath: string, relativePaths: string[]): Promise<
   )
 }
 
-function createImportMeta(projectId: string | undefined, shotId: string | undefined, assetId: string): AssetImportMeta {
+function createImportMeta(
+  projectId: string | undefined,
+  shotId: string | undefined,
+  assetId: string,
+  options?: { beatbanditUseAsInputImage?: boolean },
+): AssetImportMeta {
   return {
     source: 'beatbandit',
     ...(projectId ? { beatbanditProjectId: projectId } : {}),
     ...(shotId ? { beatbanditShotId: shotId } : {}),
     beatbanditAssetId: assetId,
+    ...(options?.beatbanditUseAsInputImage !== undefined ? { beatbanditUseAsInputImage: options.beatbanditUseAsInputImage } : {}),
   }
 }
 
@@ -498,6 +510,9 @@ export async function buildBeatBanditImportProject(
   const fallbackResolution = manifest.project.default_resolution || DEFAULT_RESOLUTION
   const fallbackDimensions = parseResolution(fallbackResolution)
   const projectId = manifest.project.id
+  const normalizedProjectThumbnailPath = manifest.project.thumbnail_path
+    ? normalizeRelativePath(manifest.project.thumbnail_path)
+    : null
 
   const allIdValues = new Set<string>()
   const registerId = (id: string, kind: string) => {
@@ -512,6 +527,13 @@ export async function buildBeatBanditImportProject(
 
   for (const asset of manifest.assets) registerId(asset.id, 'asset')
   for (const reference of manifest.references) registerId(reference.id, 'reference')
+
+  const shotStillPathUseCount = new Map<string, number>()
+  for (const assetRecord of manifest.assets) {
+    if (assetRecord.kind !== 'shot_still') continue
+    const normalizedPath = normalizeRelativePath(assetRecord.path)
+    shotStillPathUseCount.set(normalizedPath, (shotStillPathUseCount.get(normalizedPath) || 0) + 1)
+  }
 
   const fileResolutionMap = await resolveFiles(basePath, [
     ...manifest.assets.map(asset => asset.path),
@@ -560,6 +582,24 @@ export async function buildBeatBanditImportProject(
   const shotAssetRecordsByShotId = new Map<string, ImportedShotAssets>()
   const importedAssets: Asset[] = []
 
+  const shouldUseShotStillAsInputImage = (assetRecord: BeatBanditAssetRecord, shot: BeatBanditShot | undefined): boolean => {
+    if (assetRecord.kind !== 'shot_still') return false
+    if (assetRecord.source_reference_asset_id) return true
+    if (shot?.primary_reference_asset_id || shot?.reference_asset_ids?.length) return true
+
+    const normalizedPath = normalizeRelativePath(assetRecord.path)
+    const lowerPath = normalizedPath.toLowerCase()
+    const isProjectThumbnail = normalizedProjectThumbnailPath === normalizedPath
+    const looksLikePlaceholder = lowerPath.includes('placeholder') || lowerPath.includes('default') || lowerPath.includes('thumbnail')
+    const sharedAcrossShots = (shotStillPathUseCount.get(normalizedPath) || 0) > 1
+
+    if (isProjectThumbnail || looksLikePlaceholder || sharedAcrossShots) {
+      return false
+    }
+
+    return true
+  }
+
   for (const assetRecord of manifest.assets) {
     const resolved = fileResolutionMap.get(normalizeRelativePath(assetRecord.path))
     const shotId = assetRecord.source_shot_id
@@ -584,12 +624,14 @@ export async function buildBeatBanditImportProject(
       assetRecord.height ?? fallbackDimensions.height,
       fallbackResolution,
     )
+    const useAsInputImage = shouldUseShotStillAsInputImage(assetRecord, shot)
     const generationParams = getGenerationParams({
       prompt: assetRecord.prompt || shot?.t2v_prompt || '',
       durationSeconds,
       resolution: assetResolution,
       fps,
       movement: shot?.movement,
+      inputImageUrl: useAsInputImage ? resolved?.fileUrl || null : null,
     })
 
     const importedAsset: Asset = {
@@ -604,7 +646,9 @@ export async function buildBeatBanditImportProject(
       thumbnail: resolved.fileUrl,
       bin: sceneDisplayName,
       generationParams,
-      importMeta: createImportMeta(projectId, shotId, assetRecord.id),
+      importMeta: createImportMeta(projectId, shotId, assetRecord.id, {
+        beatbanditUseAsInputImage: assetRecord.kind === 'shot_still' ? useAsInputImage : undefined,
+      }),
     }
 
     importedAssets.push(importedAsset)
@@ -682,7 +726,9 @@ export async function buildBeatBanditImportProject(
           movement: shot.movement,
           primaryReference,
         }),
-        importMeta: createImportMeta(projectId, shot.id, placeholderAssetId),
+        importMeta: createImportMeta(projectId, shot.id, placeholderAssetId, {
+          beatbanditUseAsInputImage: true,
+        }),
       }
 
       importedAssets.push(placeholderAsset)
@@ -695,6 +741,9 @@ export async function buildBeatBanditImportProject(
     }
 
     if (stillAsset?.generationParams) {
+      const stillInputImageUrl = stillAsset.importMeta?.beatbanditUseAsInputImage === false
+        ? (primaryReference?.url || null)
+        : undefined
       stillAsset.generationParams = getGenerationParams({
         prompt: shot.t2v_prompt || stillAsset.prompt,
         durationSeconds,
@@ -703,10 +752,14 @@ export async function buildBeatBanditImportProject(
         movement: shot.movement,
         still: stillAsset,
         primaryReference,
+        inputImageUrl: stillInputImageUrl,
       })
     }
 
     if (videoAsset?.generationParams) {
+      const stillInputImageUrl = stillAsset?.importMeta?.beatbanditUseAsInputImage === false
+        ? (primaryReference?.url || null)
+        : undefined
       videoAsset.generationParams = getGenerationParams({
         prompt: shot.t2v_prompt || videoAsset.prompt,
         durationSeconds,
@@ -715,6 +768,7 @@ export async function buildBeatBanditImportProject(
         movement: shot.movement,
         still: stillAsset,
         primaryReference,
+        inputImageUrl: stillInputImageUrl,
       })
     }
 

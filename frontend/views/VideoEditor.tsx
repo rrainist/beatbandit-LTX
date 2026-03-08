@@ -82,7 +82,7 @@ interface BeatBanditBatchJob {
   label: string
   sourceAsset: Asset
   prompt: string
-  imagePath: string
+  imagePath: string | null
   settings: GenerationSettings
   beatbanditVariantKey?: string
   beatbanditShotId?: string
@@ -496,9 +496,12 @@ export function VideoEditor() {
     const prompt = (params.prompt || asset.prompt || '').trim()
     if (!prompt) return null
 
-    const imageUrl = params.inputImageUrl || asset.url
-    const imagePath = asset.path || (imageUrl ? fileUrlToPath(imageUrl) : null)
-    if (!imagePath) return null
+    const shouldUseInputImage = params.mode === 'image-to-video'
+      && asset.importMeta?.beatbanditUseAsInputImage !== false
+      && !!params.inputImageUrl
+    const imagePath = shouldUseInputImage && params.inputImageUrl
+      ? fileUrlToPath(params.inputImageUrl)
+      : null
 
     const rawSettings: GenerationSettings = {
       model: params.model === 'pro' ? 'pro' : 'fast',
@@ -800,7 +803,6 @@ export function VideoEditor() {
           generationParams: sourceParams
             ? {
                 ...sourceParams,
-                mode: 'image-to-video',
                 prompt: job.prompt,
                 model: job.settings.model,
                 duration: job.settings.duration,
@@ -808,7 +810,12 @@ export function VideoEditor() {
                 fps: job.settings.fps,
                 audio: job.settings.audio,
                 cameraMotion: job.settings.cameraMotion,
-                inputImageUrl: sourceParams.inputImageUrl || job.sourceAsset.url,
+                mode: sourceParams.inputImageUrl && job.sourceAsset.importMeta?.beatbanditUseAsInputImage !== false
+                  ? 'image-to-video'
+                  : 'text-to-video',
+                inputImageUrl: sourceParams.inputImageUrl && job.sourceAsset.importMeta?.beatbanditUseAsInputImage !== false
+                  ? sourceParams.inputImageUrl
+                  : undefined,
                 imageAspectRatio: job.settings.imageAspectRatio,
                 imageSteps: job.settings.imageSteps,
               }

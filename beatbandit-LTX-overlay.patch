@@ -1,60 +1,3 @@
-diff --git a/AGENTS.md b/AGENTS.md
-index 1423f12..c395009 100644
---- a/AGENTS.md
-+++ b/AGENTS.md
-@@ -10,6 +10,17 @@ LTX Desktop is an Electron app for AI video generation using LTX models. Three-l
- - **Electron** (`electron/`): Main process managing app lifecycle, IPC, Python backend process, ffmpeg export
- - **Backend** (`backend/`): Python FastAPI server (port 8000) handling ML model orchestration and generation
- 
-+## Local Vs API Video Generation
-+
-+- The video model dropdown only shows local options when the backend runtime policy allows local generation.
-+- The source of truth is `backend/runtime_config/runtime_policy.py`, surfaced to the frontend through `/api/runtime-policy`.
-+- Current policy is intentionally strict:
-+  - macOS: always API-only
-+  - Windows: API-only unless CUDA is available and detected VRAM is at least 20 GB
-+  - other platforms: API-only
-+- When local generation is allowed, the user can still opt into API video generation from Settings -> General -> `Generate With API` if an LTX API key is configured.
-+- If `force_api_generations` is true, the Settings toggle is hidden and the video dropdown will only show entries like `LTX-2.3 Fast (API)` and `LTX-2.3 Pro (API)`.
-+
- ## Common Commands
- 
- | Command | Purpose |
-diff --git a/backend/runtime_config/runtime_policy.py b/backend/runtime_config/runtime_policy.py
-index cf64b66..c6e20ef 100644
---- a/backend/runtime_config/runtime_policy.py
-+++ b/backend/runtime_config/runtime_policy.py
-@@ -13,7 +13,7 @@ def decide_force_api_generations(system: str, cuda_available: bool, vram_gb: int
-             return True
-         if vram_gb is None:
-             return True
--        return vram_gb < 31
-+        return vram_gb < 20
- 
-     # Fail closed for non-target platforms unless explicitly relaxed.
-     return True
-diff --git a/backend/tests/test_runtime_policy_decision.py b/backend/tests/test_runtime_policy_decision.py
-index 0999f70..7116cfc 100644
---- a/backend/tests/test_runtime_policy_decision.py
-+++ b/backend/tests/test_runtime_policy_decision.py
-@@ -15,7 +15,7 @@ def test_windows_without_cuda_forces_api() -> None:
- 
- 
- def test_windows_with_low_vram_forces_api() -> None:
--    assert decide_force_api_generations(system="Windows", cuda_available=True, vram_gb=30) is True
-+    assert decide_force_api_generations(system="Windows", cuda_available=True, vram_gb=19) is True
- 
- 
- def test_windows_with_unknown_vram_forces_api() -> None:
-@@ -23,7 +23,7 @@ def test_windows_with_unknown_vram_forces_api() -> None:
- 
- 
- def test_windows_with_required_vram_allows_local_mode() -> None:
--    assert decide_force_api_generations(system="Windows", cuda_available=True, vram_gb=31) is False
-+    assert decide_force_api_generations(system="Windows", cuda_available=True, vram_gb=20) is False
- 
- 
- def test_other_systems_fail_closed() -> None:
 diff --git a/electron/ipc/beatbandit-handlers.ts b/electron/ipc/beatbandit-handlers.ts
 new file mode 100644
 index 0000000..9170aa6
@@ -2282,10 +2225,10 @@ index ca20cd1..3dd8064 100644
 +}
 diff --git a/frontend/lib/beatbandit-import.ts b/frontend/lib/beatbandit-import.ts
 new file mode 100644
-index 0000000..ed15c43
+index 0000000..0f1c87f
 --- /dev/null
 +++ b/frontend/lib/beatbandit-import.ts
-@@ -0,0 +1,844 @@
+@@ -0,0 +1,898 @@
 +import {
 +  DEFAULT_COLOR_CORRECTION,
 +  DEFAULT_TRACKS,
@@ -2365,6 +2308,8 @@ index 0000000..ed15c43
 +  duration_seconds?: number
 +  source_shot_id?: string
 +  prompt?: string
++  provider_model?: string
++  source_reference_asset_id?: string
 +}
 +
 +interface BeatBanditReferenceRecord {
@@ -2634,6 +2579,7 @@ index 0000000..ed15c43
 +  movement,
 +  still,
 +  primaryReference,
++  inputImageUrl,
 +}: {
 +  prompt: string
 +  durationSeconds: number
@@ -2642,11 +2588,14 @@ index 0000000..ed15c43
 +  movement?: string
 +  still?: Asset
 +  primaryReference?: Asset
++  inputImageUrl?: string | null
 +}): GenerationParams {
-+  const inputImageUrl = still?.url || primaryReference?.url
++  const resolvedInputImageUrl = inputImageUrl !== undefined
++    ? (inputImageUrl || undefined)
++    : (still?.url || primaryReference?.url)
 +
 +  return {
-+    mode: inputImageUrl ? 'image-to-video' : 'text-to-video',
++    mode: resolvedInputImageUrl ? 'image-to-video' : 'text-to-video',
 +    prompt,
 +    model: '',
 +    duration: durationSeconds,
@@ -2654,7 +2603,7 @@ index 0000000..ed15c43
 +    fps,
 +    audio: false,
 +    cameraMotion: getCameraMotionValue(movement),
-+    ...(inputImageUrl ? { inputImageUrl } : {}),
++    ...(resolvedInputImageUrl ? { inputImageUrl: resolvedInputImageUrl } : {}),
 +  }
 +}
 +
@@ -2763,12 +2712,18 @@ index 0000000..ed15c43
 +  )
 +}
 +
-+function createImportMeta(projectId: string | undefined, shotId: string | undefined, assetId: string): AssetImportMeta {
++function createImportMeta(
++  projectId: string | undefined,
++  shotId: string | undefined,
++  assetId: string,
++  options?: { beatbanditUseAsInputImage?: boolean },
++): AssetImportMeta {
 +  return {
 +    source: 'beatbandit',
 +    ...(projectId ? { beatbanditProjectId: projectId } : {}),
 +    ...(shotId ? { beatbanditShotId: shotId } : {}),
 +    beatbanditAssetId: assetId,
++    ...(options?.beatbanditUseAsInputImage !== undefined ? { beatbanditUseAsInputImage: options.beatbanditUseAsInputImage } : {}),
 +  }
 +}
 +
@@ -2786,6 +2741,9 @@ index 0000000..ed15c43
 +  const fallbackResolution = manifest.project.default_resolution || DEFAULT_RESOLUTION
 +  const fallbackDimensions = parseResolution(fallbackResolution)
 +  const projectId = manifest.project.id
++  const normalizedProjectThumbnailPath = manifest.project.thumbnail_path
++    ? normalizeRelativePath(manifest.project.thumbnail_path)
++    : null
 +
 +  const allIdValues = new Set<string>()
 +  const registerId = (id: string, kind: string) => {
@@ -2800,6 +2758,13 @@ index 0000000..ed15c43
 +
 +  for (const asset of manifest.assets) registerId(asset.id, 'asset')
 +  for (const reference of manifest.references) registerId(reference.id, 'reference')
++
++  const shotStillPathUseCount = new Map<string, number>()
++  for (const assetRecord of manifest.assets) {
++    if (assetRecord.kind !== 'shot_still') continue
++    const normalizedPath = normalizeRelativePath(assetRecord.path)
++    shotStillPathUseCount.set(normalizedPath, (shotStillPathUseCount.get(normalizedPath) || 0) + 1)
++  }
 +
 +  const fileResolutionMap = await resolveFiles(basePath, [
 +    ...manifest.assets.map(asset => asset.path),
@@ -2848,6 +2813,24 @@ index 0000000..ed15c43
 +  const shotAssetRecordsByShotId = new Map<string, ImportedShotAssets>()
 +  const importedAssets: Asset[] = []
 +
++  const shouldUseShotStillAsInputImage = (assetRecord: BeatBanditAssetRecord, shot: BeatBanditShot | undefined): boolean => {
++    if (assetRecord.kind !== 'shot_still') return false
++    if (assetRecord.source_reference_asset_id) return true
++    if (shot?.primary_reference_asset_id || shot?.reference_asset_ids?.length) return true
++
++    const normalizedPath = normalizeRelativePath(assetRecord.path)
++    const lowerPath = normalizedPath.toLowerCase()
++    const isProjectThumbnail = normalizedProjectThumbnailPath === normalizedPath
++    const looksLikePlaceholder = lowerPath.includes('placeholder') || lowerPath.includes('default') || lowerPath.includes('thumbnail')
++    const sharedAcrossShots = (shotStillPathUseCount.get(normalizedPath) || 0) > 1
++
++    if (isProjectThumbnail || looksLikePlaceholder || sharedAcrossShots) {
++      return false
++    }
++
++    return true
++  }
++
 +  for (const assetRecord of manifest.assets) {
 +    const resolved = fileResolutionMap.get(normalizeRelativePath(assetRecord.path))
 +    const shotId = assetRecord.source_shot_id
@@ -2872,12 +2855,14 @@ index 0000000..ed15c43
 +      assetRecord.height ?? fallbackDimensions.height,
 +      fallbackResolution,
 +    )
++    const useAsInputImage = shouldUseShotStillAsInputImage(assetRecord, shot)
 +    const generationParams = getGenerationParams({
 +      prompt: assetRecord.prompt || shot?.t2v_prompt || '',
 +      durationSeconds,
 +      resolution: assetResolution,
 +      fps,
 +      movement: shot?.movement,
++      inputImageUrl: useAsInputImage ? resolved?.fileUrl || null : null,
 +    })
 +
 +    const importedAsset: Asset = {
@@ -2892,7 +2877,9 @@ index 0000000..ed15c43
 +      thumbnail: resolved.fileUrl,
 +      bin: sceneDisplayName,
 +      generationParams,
-+      importMeta: createImportMeta(projectId, shotId, assetRecord.id),
++      importMeta: createImportMeta(projectId, shotId, assetRecord.id, {
++        beatbanditUseAsInputImage: assetRecord.kind === 'shot_still' ? useAsInputImage : undefined,
++      }),
 +    }
 +
 +    importedAssets.push(importedAsset)
@@ -2970,7 +2957,9 @@ index 0000000..ed15c43
 +          movement: shot.movement,
 +          primaryReference,
 +        }),
-+        importMeta: createImportMeta(projectId, shot.id, placeholderAssetId),
++        importMeta: createImportMeta(projectId, shot.id, placeholderAssetId, {
++          beatbanditUseAsInputImage: true,
++        }),
 +      }
 +
 +      importedAssets.push(placeholderAsset)
@@ -2983,6 +2972,9 @@ index 0000000..ed15c43
 +    }
 +
 +    if (stillAsset?.generationParams) {
++      const stillInputImageUrl = stillAsset.importMeta?.beatbanditUseAsInputImage === false
++        ? (primaryReference?.url || null)
++        : undefined
 +      stillAsset.generationParams = getGenerationParams({
 +        prompt: shot.t2v_prompt || stillAsset.prompt,
 +        durationSeconds,
@@ -2991,10 +2983,14 @@ index 0000000..ed15c43
 +        movement: shot.movement,
 +        still: stillAsset,
 +        primaryReference,
++        inputImageUrl: stillInputImageUrl,
 +      })
 +    }
 +
 +    if (videoAsset?.generationParams) {
++      const stillInputImageUrl = stillAsset?.importMeta?.beatbanditUseAsInputImage === false
++        ? (primaryReference?.url || null)
++        : undefined
 +      videoAsset.generationParams = getGenerationParams({
 +        prompt: shot.t2v_prompt || videoAsset.prompt,
 +        durationSeconds,
@@ -3003,6 +2999,7 @@ index 0000000..ed15c43
 +        movement: shot.movement,
 +        still: stillAsset,
 +        primaryReference,
++        inputImageUrl: stillInputImageUrl,
 +      })
 +    }
 +
@@ -3132,10 +3129,10 @@ index 0000000..ed15c43
 +}
 diff --git a/frontend/test/beatbandit-import.smoke.ts b/frontend/test/beatbandit-import.smoke.ts
 new file mode 100644
-index 0000000..ef7f116
+index 0000000..034d080
 --- /dev/null
 +++ b/frontend/test/beatbandit-import.smoke.ts
-@@ -0,0 +1,322 @@
+@@ -0,0 +1,398 @@
 +import assert from 'node:assert/strict'
 +import { buildBeatBanditImportProject } from '../lib/beatbandit-import'
 +
@@ -3446,11 +3443,87 @@ index 0000000..ef7f116
 +  assert.ok(masterTimeline.tracks.some(track => track.name === 'V5'))
 +}
 +
++async function testSharedPlaceholderStillUsesTextToVideo(): Promise<void> {
++  const basePath = 'C:\\Imports\\BeatBandit Shared Placeholder'
++  const existingPaths = [
++    `${basePath}\\assets\\thumbnail.png`,
++  ]
++
++  ;(globalThis as any).window = {
++    electronAPI: {
++      checkFilesExist: createCheckFilesExist(existingPaths),
++    },
++  }
++
++  const result = await buildBeatBanditImportProject({
++    schema_version: '1.0.0',
++    project: {
++      id: 'bb-project-5',
++      name: 'Shared Placeholder Story',
++      default_fps: 24,
++      default_resolution: '1920x1080',
++      thumbnail_path: 'assets/thumbnail.png',
++    },
++    scenes: [
++      { id: 'scene_040', name: 'INT. OFFICE - DAY', position: 1000, scene_number: 40 },
++    ],
++    shots: [
++      {
++        id: 'shot_030',
++        scene_id: 'scene_040',
++        position: 1000,
++        duration_seconds: 5,
++        t2v_prompt: 'A manager stares out the office window.',
++        selected_still_asset_id: 'asset_still_030',
++      },
++      {
++        id: 'shot_031',
++        scene_id: 'scene_040',
++        position: 2000,
++        duration_seconds: 5,
++        t2v_prompt: 'The employee enters through the doorway.',
++        selected_still_asset_id: 'asset_still_031',
++      },
++    ],
++    assets: [
++      {
++        id: 'asset_still_030',
++        kind: 'shot_still',
++        path: 'assets/thumbnail.png',
++        width: 1920,
++        height: 1080,
++        source_shot_id: 'shot_030',
++        prompt: 'A manager stares out the office window.',
++      },
++      {
++        id: 'asset_still_031',
++        kind: 'shot_still',
++        path: 'assets/thumbnail.png',
++        width: 1920,
++        height: 1080,
++        source_shot_id: 'shot_031',
++        prompt: 'The employee enters through the doorway.',
++      },
++    ],
++    references: [],
++  }, basePath)
++
++  const firstStill = result.project.assets.find(asset => asset.id === 'asset_still_030')
++  const secondStill = result.project.assets.find(asset => asset.id === 'asset_still_031')
++  assert.equal(firstStill?.importMeta?.beatbanditUseAsInputImage, false)
++  assert.equal(secondStill?.importMeta?.beatbanditUseAsInputImage, false)
++  assert.equal(firstStill?.generationParams?.mode, 'text-to-video')
++  assert.equal(secondStill?.generationParams?.mode, 'text-to-video')
++  assert.equal(firstStill?.generationParams?.inputImageUrl, undefined)
++  assert.equal(secondStill?.generationParams?.inputImageUrl, undefined)
++}
++
 +async function main(): Promise<void> {
 +  await testCompleteImport()
 +  await testDegradedImport()
 +  await testReferenceOnlyShotFallback()
 +  await testLaneDuplicationImport()
++  await testSharedPlaceholderStillUsesTextToVideo()
 +  console.log('BeatBandit import smoke tests passed')
 +}
 +
@@ -3459,10 +3532,10 @@ index 0000000..ef7f116
 +  process.exitCode = 1
 +})
 diff --git a/frontend/types/project.ts b/frontend/types/project.ts
-index 24c486b..57f7d59 100644
+index 24c486b..d6adc99 100644
 --- a/frontend/types/project.ts
 +++ b/frontend/types/project.ts
-@@ -1,434 +1,444 @@
+@@ -1,434 +1,445 @@
 -// Project and Asset types for LTX Desktop
 -
 -// Parameters needed to regenerate a shot
@@ -3932,6 +4005,7 @@ index 24c486b..57f7d59 100644
 +  beatbanditProjectId?: string
 +  beatbanditShotId?: string
 +  beatbanditAssetId?: string
++  beatbanditUseAsInputImage?: boolean
 +}
 +
 +export interface Asset {
@@ -5337,7 +5411,7 @@ index 05c3aa0..7dafa50 100644
 +  )
 +}
 diff --git a/frontend/views/VideoEditor.tsx b/frontend/views/VideoEditor.tsx
-index dadacf6..57baf5e 100644
+index dadacf6..34357da 100644
 --- a/frontend/views/VideoEditor.tsx
 +++ b/frontend/views/VideoEditor.tsx
 @@ -21,13 +21,15 @@ import { useGeneration } from '../hooks/use-generation'
@@ -5379,7 +5453,7 @@ index dadacf6..57baf5e 100644
 +  label: string
 +  sourceAsset: Asset
 +  prompt: string
-+  imagePath: string
++  imagePath: string | null
 +  settings: GenerationSettings
 +  beatbanditVariantKey?: string
 +  beatbanditShotId?: string
@@ -5423,7 +5497,7 @@ index dadacf6..57baf5e 100644
    
    // Right properties panel: user-controlled open/close (not tied to selection)
    const [showPropertiesPanel, setShowPropertiesPanel] = useState(false)
-@@ -430,6 +476,395 @@ export function VideoEditor() {
+@@ -430,6 +476,402 @@ export function VideoEditor() {
    const assets = currentProject?.assets || []
    const timelines = currentProject?.timelines || []
  
@@ -5447,9 +5521,12 @@ index dadacf6..57baf5e 100644
 +    const prompt = (params.prompt || asset.prompt || '').trim()
 +    if (!prompt) return null
 +
-+    const imageUrl = params.inputImageUrl || asset.url
-+    const imagePath = asset.path || (imageUrl ? fileUrlToPath(imageUrl) : null)
-+    if (!imagePath) return null
++    const shouldUseInputImage = params.mode === 'image-to-video'
++      && asset.importMeta?.beatbanditUseAsInputImage !== false
++      && !!params.inputImageUrl
++    const imagePath = shouldUseInputImage && params.inputImageUrl
++      ? fileUrlToPath(params.inputImageUrl)
++      : null
 +
 +    const rawSettings: GenerationSettings = {
 +      model: params.model === 'pro' ? 'pro' : 'fast',
@@ -5751,7 +5828,6 @@ index dadacf6..57baf5e 100644
 +          generationParams: sourceParams
 +            ? {
 +                ...sourceParams,
-+                mode: 'image-to-video',
 +                prompt: job.prompt,
 +                model: job.settings.model,
 +                duration: job.settings.duration,
@@ -5759,7 +5835,12 @@ index dadacf6..57baf5e 100644
 +                fps: job.settings.fps,
 +                audio: job.settings.audio,
 +                cameraMotion: job.settings.cameraMotion,
-+                inputImageUrl: sourceParams.inputImageUrl || job.sourceAsset.url,
++                mode: sourceParams.inputImageUrl && job.sourceAsset.importMeta?.beatbanditUseAsInputImage !== false
++                  ? 'image-to-video'
++                  : 'text-to-video',
++                inputImageUrl: sourceParams.inputImageUrl && job.sourceAsset.importMeta?.beatbanditUseAsInputImage !== false
++                  ? sourceParams.inputImageUrl
++                  : undefined,
 +                imageAspectRatio: job.settings.imageAspectRatio,
 +                imageSteps: job.settings.imageSteps,
 +              }
@@ -5819,7 +5900,7 @@ index dadacf6..57baf5e 100644
    // Undo/redo/clipboard (extracted hook)
    const {
      undoStackRef, redoStackRef, clipboardRef,
-@@ -1668,7 +2103,11 @@ export function VideoEditor() {
+@@ -1668,7 +2110,11 @@ export function VideoEditor() {
      showEffectsBrowser, showSourceMonitor, showPropertiesPanel, showICLoraPanel: _showICLoraPanel, // IC-LORA HIDDEN
      sourceAsset, activeTool, activeTimeline, timelines, kbLayout,
      fileInputRef, subtitleFileInputRef,
@@ -5832,7 +5913,7 @@ index dadacf6..57baf5e 100644
      undoRef, redoRef, cutRef, copyRef, pasteRef,
      setSelectedClipIds, handleInsertEdit, handleOverwriteEdit, matchFrameRef, setKbEditorOpen,
      splitClipAtPlayhead, duplicateClip, pushUndo, setClips, updateClip, setTracks,
-@@ -1677,7 +2116,7 @@ export function VideoEditor() {
+@@ -1677,7 +2123,7 @@ export function VideoEditor() {
      setShowICLoraPanel: _setShowICLoraPanel, setIcLoraSourceClipId: _setIcLoraSourceClipId, // IC-LORA HIDDEN
      setActiveTool, setLastTrimTool, setShowProjectSettings,
      handleAddTimeline, handleDuplicateTimeline, handleResetLayout,
@@ -5841,7 +5922,7 @@ index dadacf6..57baf5e 100644
  
  
    // --- Render ---
-@@ -3123,7 +3562,14 @@ export function VideoEditor() {
+@@ -3123,7 +3569,14 @@ export function VideoEditor() {
                            </>
                          ) : clip.asset && (
                            clip.asset.type === 'video' ? (
@@ -5857,7 +5938,7 @@ index dadacf6..57baf5e 100644
                            ) : (
                              <img key={`thumb-${clip.id}-${clip.takeIndex ?? 'default'}`} src={getClipUrl(clip) || clip.asset.url} alt="" className="h-8 aspect-video object-cover rounded" />
                            )
-@@ -3752,6 +4198,18 @@ export function VideoEditor() {
+@@ -3752,6 +4205,18 @@ export function VideoEditor() {
              <Upload className="h-3 w-3 mr-1" />
              Export
            </Button>
@@ -5876,7 +5957,7 @@ index dadacf6..57baf5e 100644
            
            
            {/* Subtitle import/export */}
-@@ -4073,6 +4531,28 @@ export function VideoEditor() {
+@@ -4073,6 +4538,28 @@ export function VideoEditor() {
        
        
        
@@ -5933,10 +6014,22 @@ index d89c2c1..326c4e4 100644
      },
  
 diff --git a/frontend/views/editor/useRegeneration.ts b/frontend/views/editor/useRegeneration.ts
-index 8072b34..a0ce8cc 100644
+index 8072b34..4bcd55d 100644
 --- a/frontend/views/editor/useRegeneration.ts
 +++ b/frontend/views/editor/useRegeneration.ts
-@@ -319,20 +319,72 @@ export function useRegeneration(params: UseRegenerationParams) {
+@@ -280,7 +280,10 @@ export function useRegeneration(params: UseRegenerationParams) {
+     } else {
+       // For video generation (T2V or I2V)
+       // Extract filesystem path from the input image URL if present
+-      const imagePath = params.mode === 'image-to-video' && params.inputImageUrl
++      const shouldUseInputImage = params.mode === 'image-to-video'
++        && asset.importMeta?.beatbanditUseAsInputImage !== false
++        && !!params.inputImageUrl
++      const imagePath = shouldUseInputImage && params.inputImageUrl
+         ? fileUrlToPath(params.inputImageUrl)
+         : null
+ 
+@@ -319,20 +322,78 @@ export function useRegeneration(params: UseRegenerationParams) {
      if (regenVideoUrl && regenVideoPath && regeneratingAssetId && currentProjectId && !isRegenerating) {
        ;(async () => {
          const { path: finalPath, url: finalUrl } = await copyToAssetFolder(regenVideoPath, regenVideoUrl, assetSavePath)
@@ -5984,10 +6077,16 @@ index 8072b34..a0ce8cc 100644
 +            generationParams: sourceParams
 +              ? {
 +                  ...sourceParams,
-+                  mode: sourceParams.mode === 'text-to-image' ? 'text-to-video' : sourceParams.mode,
++                  mode: sourceParams.mode === 'text-to-image'
++                    ? 'text-to-video'
++                    : (sourceParams.inputImageUrl && sourceAsset?.importMeta?.beatbanditUseAsInputImage !== false
++                        ? 'image-to-video'
++                        : 'text-to-video'),
 +                  duration: generatedDuration,
 +                  resolution: generatedResolution,
-+                  inputImageUrl: sourceParams.inputImageUrl || sourceAsset?.url,
++                  inputImageUrl: sourceParams.inputImageUrl && sourceAsset?.importMeta?.beatbanditUseAsInputImage !== false
++                    ? sourceParams.inputImageUrl
++                    : undefined,
 +                }
 +              : undefined,
 +            takes: [{
@@ -6021,7 +6120,7 @@ index 8072b34..a0ce8cc 100644
          }
  
          setRegeneratingAssetId(null)
-@@ -340,7 +392,7 @@ export function useRegeneration(params: UseRegenerationParams) {
+@@ -340,7 +401,7 @@ export function useRegeneration(params: UseRegenerationParams) {
          regenReset()
        })()
      }

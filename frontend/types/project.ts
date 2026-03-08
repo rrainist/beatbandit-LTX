@@ -33,6 +33,7 @@ export interface AssetImportMeta {
   beatbanditProjectId?: string
   beatbanditShotId?: string
   beatbanditAssetId?: string
+  beatbanditUseAsInputImage?: boolean
 }
 
 export interface Asset {

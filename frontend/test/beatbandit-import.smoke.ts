@@ -308,11 +308,87 @@ async function testLaneDuplicationImport(): Promise<void> {
   assert.ok(masterTimeline.tracks.some(track => track.name === 'V5'))
 }
 
+async function testSharedPlaceholderStillUsesTextToVideo(): Promise<void> {
+  const basePath = 'C:\\Imports\\BeatBandit Shared Placeholder'
+  const existingPaths = [
+    `${basePath}\\assets\\thumbnail.png`,
+  ]
+
+  ;(globalThis as any).window = {
+    electronAPI: {
+      checkFilesExist: createCheckFilesExist(existingPaths),
+    },
+  }
+
+  const result = await buildBeatBanditImportProject({
+    schema_version: '1.0.0',
+    project: {
+      id: 'bb-project-5',
+      name: 'Shared Placeholder Story',
+      default_fps: 24,
+      default_resolution: '1920x1080',
+      thumbnail_path: 'assets/thumbnail.png',
+    },
+    scenes: [
+      { id: 'scene_040', name: 'INT. OFFICE - DAY', position: 1000, scene_number: 40 },
+    ],
+    shots: [
+      {
+        id: 'shot_030',
+        scene_id: 'scene_040',
+        position: 1000,
+        duration_seconds: 5,
+        t2v_prompt: 'A manager stares out the office window.',
+        selected_still_asset_id: 'asset_still_030',
+      },
+      {
+        id: 'shot_031',
+        scene_id: 'scene_040',
+        position: 2000,
+        duration_seconds: 5,
+        t2v_prompt: 'The employee enters through the doorway.',
+        selected_still_asset_id: 'asset_still_031',
+      },
+    ],
+    assets: [
+      {
+        id: 'asset_still_030',
+        kind: 'shot_still',
+        path: 'assets/thumbnail.png',
+        width: 1920,
+        height: 1080,
+        source_shot_id: 'shot_030',
+        prompt: 'A manager stares out the office window.',
+      },
+      {
+        id: 'asset_still_031',
+        kind: 'shot_still',
+        path: 'assets/thumbnail.png',
+        width: 1920,
+        height: 1080,
+        source_shot_id: 'shot_031',
+        prompt: 'The employee enters through the doorway.',
+      },
+    ],
+    references: [],
+  }, basePath)
+
+  const firstStill = result.project.assets.find(asset => asset.id === 'asset_still_030')
+  const secondStill = result.project.assets.find(asset => asset.id === 'asset_still_031')
+  assert.equal(firstStill?.importMeta?.beatbanditUseAsInputImage, false)
+  assert.equal(secondStill?.importMeta?.beatbanditUseAsInputImage, false)
+  assert.equal(firstStill?.generationParams?.mode, 'text-to-video')
+  assert.equal(secondStill?.generationParams?.mode, 'text-to-video')
+  assert.equal(firstStill?.generationParams?.inputImageUrl, undefined)
+  assert.equal(secondStill?.generationParams?.inputImageUrl, undefined)
+}
+
 async function main(): Promise<void> {
   await testCompleteImport()
   await testDegradedImport()
   await testReferenceOnlyShotFallback()
   await testLaneDuplicationImport()
+  await testSharedPlaceholderStillUsesTextToVideo()
   console.log('BeatBandit import smoke tests passed')
 }
 

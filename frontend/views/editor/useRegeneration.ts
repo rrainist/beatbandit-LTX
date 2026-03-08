@@ -280,7 +280,10 @@ export function useRegeneration(params: UseRegenerationParams) {
     } else {
       // For video generation (T2V or I2V)
       // Extract filesystem path from the input image URL if present
-      const imagePath = params.mode === 'image-to-video' && params.inputImageUrl
+      const shouldUseInputImage = params.mode === 'image-to-video'
+        && asset.importMeta?.beatbanditUseAsInputImage !== false
+        && !!params.inputImageUrl
+      const imagePath = shouldUseInputImage && params.inputImageUrl
         ? fileUrlToPath(params.inputImageUrl)
         : null
 
@@ -358,10 +361,16 @@ export function useRegeneration(params: UseRegenerationParams) {
             generationParams: sourceParams
               ? {
                   ...sourceParams,
-                  mode: sourceParams.mode === 'text-to-image' ? 'text-to-video' : sourceParams.mode,
+                  mode: sourceParams.mode === 'text-to-image'
+                    ? 'text-to-video'
+                    : (sourceParams.inputImageUrl && sourceAsset?.importMeta?.beatbanditUseAsInputImage !== false
+                        ? 'image-to-video'
+                        : 'text-to-video'),
                   duration: generatedDuration,
                   resolution: generatedResolution,
-                  inputImageUrl: sourceParams.inputImageUrl || sourceAsset?.url,
+                  inputImageUrl: sourceParams.inputImageUrl && sourceAsset?.importMeta?.beatbanditUseAsInputImage !== false
+                    ? sourceParams.inputImageUrl
+                    : undefined,
                 }
               : undefined,
             takes: [{
