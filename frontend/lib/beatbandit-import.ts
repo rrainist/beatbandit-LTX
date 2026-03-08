@@ -610,7 +610,7 @@ export async function buildBeatBanditImportProject(
   const shotAssetRecordsByShotId = new Map<string, ImportedShotAssets>()
   const importedAssets: Asset[] = []
 
-  const shouldUseShotStillAsInputImage = (assetRecord: BeatBanditAssetRecord, shot: BeatBanditShot | undefined): boolean => {
+  const shouldUseShotStillAsInputImage = (assetRecord: BeatBanditAssetRecord, _shot: BeatBanditShot | undefined): boolean => {
     if (assetRecord.kind !== 'shot_still') return false
     // Never use I2V when the still is sourced from a character/env/object reference (e.g. #HUGO1).
     // Only use I2V when we have an image created specifically for this shot.
@@ -840,7 +840,7 @@ export async function buildBeatBanditImportProject(
       }
 
       if (!preparedShot.selectedAsset) {
-        currentTime += preparedShot.durationSeconds
+        currentTime += preparedShot.durationSeconds * laneCount
         continue
       }
 
@@ -852,7 +852,7 @@ export async function buildBeatBanditImportProject(
           currentTime,
           preparedShot.durationSeconds,
           preparedShot.colorLabel,
-          laneIndex,
+          0,
           beatbanditVariantKey,
           laneIndex + 1,
         )
@@ -867,7 +867,7 @@ export async function buildBeatBanditImportProject(
             preparedShot.selectedAsset,
             currentTime,
             preparedShot.durationSeconds,
-            laneCount + laneIndex,
+            1,
             videoClipId,
             preparedShot.colorLabel,
             beatbanditVariantKey,
@@ -876,16 +876,16 @@ export async function buildBeatBanditImportProject(
         } else {
           clips.push(timelineClip)
         }
-      }
 
-      if (preparedShot.dialogue) {
-        subtitles.push(createSubtitle(preparedShot.dialogue, currentTime, currentTime + preparedShot.durationSeconds))
-      }
+        if (preparedShot.dialogue && laneIndex === 0) {
+          subtitles.push(createSubtitle(preparedShot.dialogue, currentTime, currentTime + preparedShot.durationSeconds))
+        }
 
-      currentTime += preparedShot.durationSeconds
+        currentTime += preparedShot.durationSeconds
+      }
     }
 
-    const normalized = withSubtitleTrackIfNeeded(clips, subtitles, laneCount, laneCount)
+    const normalized = withSubtitleTrackIfNeeded(clips, subtitles, 1, 1)
     return {
       ...baseTimeline,
       tracks: normalized.tracks,
