@@ -612,8 +612,9 @@ export async function buildBeatBanditImportProject(
 
   const shouldUseShotStillAsInputImage = (assetRecord: BeatBanditAssetRecord, shot: BeatBanditShot | undefined): boolean => {
     if (assetRecord.kind !== 'shot_still') return false
-    if (assetRecord.source_reference_asset_id) return true
-    if (shot?.primary_reference_asset_id || shot?.reference_asset_ids?.length) return true
+    // Never use I2V when the still is sourced from a character/env/object reference (e.g. #HUGO1).
+    // Only use I2V when we have an image created specifically for this shot.
+    if (assetRecord.source_reference_asset_id) return false
 
     const normalizedPath = normalizeRelativePath(assetRecord.path)
     const lowerPath = normalizedPath.toLowerCase()
@@ -760,10 +761,10 @@ export async function buildBeatBanditImportProject(
           resolution: primaryReference.resolution || fallbackResolution,
           fps,
           movement: shot.movement,
-          primaryReference,
+          inputImageUrl: null,
         }),
         importMeta: createImportMeta(projectId, shot.id, placeholderAssetId, {
-          beatbanditUseAsInputImage: true,
+          beatbanditUseAsInputImage: false,
           beatbanditOriginalPrompt: originalPrompt,
           beatbanditCompactPrompt: compactPrompt,
         }),
@@ -779,9 +780,9 @@ export async function buildBeatBanditImportProject(
     }
 
     if (stillAsset?.generationParams) {
-      const stillInputImageUrl = stillAsset.importMeta?.beatbanditUseAsInputImage === false
-        ? (primaryReference?.url || null)
-        : undefined
+      const stillInputImageUrl = stillAsset.importMeta?.beatbanditUseAsInputImage === true
+        ? (stillAsset?.url ?? undefined)
+        : null
       stillAsset.generationParams = getGenerationParams({
         prompt: getPreferredBeatBanditPrompt(shot, stillAsset.prompt),
         durationSeconds,
@@ -795,9 +796,9 @@ export async function buildBeatBanditImportProject(
     }
 
     if (videoAsset?.generationParams) {
-      const stillInputImageUrl = stillAsset?.importMeta?.beatbanditUseAsInputImage === false
-        ? (primaryReference?.url || null)
-        : undefined
+      const stillInputImageUrl = stillAsset?.importMeta?.beatbanditUseAsInputImage === true
+        ? (stillAsset?.url ?? undefined)
+        : null
       videoAsset.generationParams = getGenerationParams({
         prompt: getPreferredBeatBanditPrompt(shot, videoAsset.prompt),
         durationSeconds,
