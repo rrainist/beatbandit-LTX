@@ -273,7 +273,7 @@ export function VideoEditor() {
     duration: 5,
     videoResolution: '720p',
     fps: 24,
-    audio: false,
+    audio: true,
     cameraMotion: 'none',
     imageResolution: '1080p',
     imageAspectRatio: '16:9',
