@@ -65,6 +65,7 @@ import { SubtitleTrackStyleEditor } from './editor/SubtitleTrackStyleEditor'
 import { copyToAssetFolder } from '../lib/asset-copy'
 import { fileUrlToPath } from '../lib/url-to-path'
 import { sanitizeForcedApiVideoSettings } from '../lib/api-video-options'
+import { pixelResolutionToLabel } from '../lib/beatbandit-import'
 
 // Custom scissors cursor SVG for the blade tool (white with dark outline for contrast)
 const SCISSORS_CURSOR_SVG = `<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='6' cy='6' r='3'/><path d='M8.12 8.12 12 12'/><path d='M20 4 8.12 15.88'/><circle cx='6' cy='18' r='3'/><path d='M14.8 14.8 20 20'/></svg>`
@@ -267,6 +268,17 @@ export function VideoEditor() {
   const [showImportTimelineModal, setShowImportTimelineModal] = useState(false)
   const [showBeatBanditBatchModal, setShowBeatBanditBatchModal] = useState(false)
   const [beatBanditBatchScope, setBeatBanditBatchScope] = useState<BeatBanditBatchScope>('project')
+  const [beatBanditBatchSettings, setBeatBanditBatchSettings] = useState<GenerationSettings>({
+    model: 'fast',
+    duration: 5,
+    videoResolution: '720p',
+    fps: 24,
+    audio: false,
+    cameraMotion: 'none',
+    imageResolution: '1080p',
+    imageAspectRatio: '16:9',
+    imageSteps: 4,
+  })
   const [beatBanditBatchStatus, setBeatBanditBatchStatus] = useState<'idle' | 'running' | 'done' | 'cancelled'>('idle')
   const [beatBanditBatchTotal, setBeatBanditBatchTotal] = useState(0)
   const [beatBanditBatchCompleted, setBeatBanditBatchCompleted] = useState(0)
@@ -484,7 +496,7 @@ export function VideoEditor() {
     return (clip.asset as Asset | undefined) || null
   }, [assets])
 
-  const getBeatBanditBatchJobFromClip = useCallback((clip: TimelineClip): BeatBanditBatchJob | null => {
+  const getBeatBanditBatchJobFromClip = useCallback((clip: TimelineClip, settingsOverride?: GenerationSettings): BeatBanditBatchJob | null => {
     const asset = getBatchClipAsset(clip)
     if (!asset || asset.importMeta?.source !== 'beatbandit' || asset.type !== 'image') return null
 
@@ -503,18 +515,26 @@ export function VideoEditor() {
       ? fileUrlToPath(params.inputImageUrl)
       : null
 
-    const rawSettings: GenerationSettings = {
-      model: params.model === 'pro' ? 'pro' : 'fast',
-      duration: params.duration,
-      videoResolution: params.resolution,
-      fps: params.fps,
-      audio: params.audio,
-      cameraMotion: params.cameraMotion,
-      aspectRatio: params.imageAspectRatio || '16:9',
-      imageResolution: '1080p',
-      imageAspectRatio: params.imageAspectRatio || '16:9',
-      imageSteps: params.imageSteps || 4,
-    }
+    const rawSettings: GenerationSettings = settingsOverride
+      ? {
+          ...settingsOverride,
+          duration: params.duration,
+          imageResolution: settingsOverride.imageResolution || '1080p',
+          imageAspectRatio: settingsOverride.imageAspectRatio || '16:9',
+          imageSteps: settingsOverride.imageSteps || 4,
+        }
+      : {
+          model: params.model === 'pro' ? 'pro' : 'fast',
+          duration: params.duration,
+          videoResolution: pixelResolutionToLabel(params.resolution),
+          fps: params.fps,
+          audio: params.audio,
+          cameraMotion: params.cameraMotion,
+          aspectRatio: params.imageAspectRatio || '16:9',
+          imageResolution: '1080p',
+          imageAspectRatio: params.imageAspectRatio || '16:9',
+          imageSteps: params.imageSteps || 4,
+        }
 
     const settings = shouldVideoGenerateWithLtxApi
       ? sanitizeForcedApiVideoSettings(rawSettings)
@@ -535,7 +555,7 @@ export function VideoEditor() {
     }
   }, [getBatchClipAsset, shouldVideoGenerateWithLtxApi])
 
-  const buildBeatBanditBatchJobs = useCallback((scope: BeatBanditBatchScope) => {
+  const buildBeatBanditBatchJobs = useCallback((scope: BeatBanditBatchScope, settingsOverride?: GenerationSettings) => {
     const seen = new Set<string>()
     const sourceTimelines = scope === 'timeline'
       ? (activeTimeline ? [{ ...activeTimeline, clips }] : [])
@@ -545,7 +565,7 @@ export function VideoEditor() {
     for (const timeline of sourceTimelines) {
       for (const rawClip of timeline.clips || []) {
         const clip = rawClip as TimelineClip
-        const job = getBeatBanditBatchJobFromClip(clip)
+        const job = getBeatBanditBatchJobFromClip(clip, settingsOverride)
         if (!job || seen.has(job.jobKey)) continue
         seen.add(job.jobKey)
         jobs.push(job)
@@ -858,8 +878,8 @@ export function VideoEditor() {
   }, [beatBanditBatchStatus])
 
   const handleStartBeatBanditBatchGeneration = useCallback(() => {
-    void runBeatBanditBatchJobs(buildBeatBanditBatchJobs(beatBanditBatchScope))
-  }, [beatBanditBatchScope, buildBeatBanditBatchJobs, runBeatBanditBatchJobs])
+    void runBeatBanditBatchJobs(buildBeatBanditBatchJobs(beatBanditBatchScope, beatBanditBatchSettings))
+  }, [beatBanditBatchScope, beatBanditBatchSettings, buildBeatBanditBatchJobs, runBeatBanditBatchJobs])
 
   const handleRetryFailedBeatBanditBatchGeneration = useCallback(() => {
     const failedKeys = new Set(beatBanditBatchFailures.map(failure => failure.jobKey))
@@ -4558,6 +4578,9 @@ export function VideoEditor() {
         onStart={handleStartBeatBanditBatchGeneration}
         onCancel={handleCancelBeatBanditBatchGeneration}
         onRetryFailed={handleRetryFailedBeatBanditBatchGeneration}
+        settings={beatBanditBatchSettings}
+        onSettingsChange={setBeatBanditBatchSettings}
+        forceApiGenerations={shouldVideoGenerateWithLtxApi}
       />
 
       <ExportModal

@@ -211,6 +211,15 @@ function pathToFileUrl(filePath: string): string {
   return normalized.startsWith('/') ? `file://${normalized}` : `file:///${normalized}`
 }
 
+export function pixelResolutionToLabel(resolution?: string | null): string {
+  const match = typeof resolution === 'string' ? resolution.match(/^(\d+)x(\d+)$/i) : null
+  if (!match) return '720p'
+  const maxDim = Math.max(Number(match[1]), Number(match[2]))
+  if (maxDim >= 1920) return '1080p'
+  if (maxDim >= 1280) return '720p'
+  return '540p'
+}
+
 function parseResolution(resolution?: string | null): { width?: number; height?: number } {
   const match = typeof resolution === 'string' ? resolution.match(/^(\d+)x(\d+)$/i) : null
   if (!match) {

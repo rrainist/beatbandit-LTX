@@ -4,6 +4,7 @@ import type { GenerationSettings } from '../../components/SettingsPanel'
 import { copyToAssetFolder } from '../../lib/asset-copy'
 import { fileUrlToPath } from '../../lib/url-to-path'
 import { sanitizeForcedApiVideoSettings } from '../../lib/api-video-options'
+import { pixelResolutionToLabel } from '../../lib/beatbandit-import'
 import { logger } from '../../lib/logger'
 
 export interface UseRegenerationParams {
@@ -225,7 +226,7 @@ export function useRegeneration(params: UseRegenerationParams) {
                 prompt: data.suggested_prompt,
                 model: 'fast',
                 duration: asset.duration || 5,
-                resolution: asset.resolution || '768x512',
+                resolution: pixelResolutionToLabel(asset.resolution),
                 fps: 24,
                 audio: false,
                 cameraMotion: 'none',
@@ -290,7 +291,7 @@ export function useRegeneration(params: UseRegenerationParams) {
       const rawVideoSettings: GenerationSettings = {
         model: params.model as 'fast' | 'pro',
         duration: params.duration,
-        videoResolution: params.resolution,
+        videoResolution: pixelResolutionToLabel(params.resolution),
         fps: params.fps,
         audio: params.audio,
         cameraMotion: params.cameraMotion,

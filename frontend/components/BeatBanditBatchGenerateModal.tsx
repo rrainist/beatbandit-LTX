@@ -1,5 +1,7 @@
 import { AlertCircle, CheckCircle2, Clapperboard, Loader2, RefreshCw, X } from 'lucide-react'
 import { Button } from './ui/button'
+import { SettingsPanel } from './SettingsPanel'
+import type { GenerationSettings } from './SettingsPanel'
 
 export type BeatBanditBatchScope = 'timeline' | 'project'
 
@@ -25,6 +27,9 @@ interface BeatBanditBatchGenerateModalProps {
   onStart: () => void
   onCancel: () => void
   onRetryFailed: () => void
+  settings?: GenerationSettings
+  onSettingsChange?: (settings: GenerationSettings) => void
+  forceApiGenerations?: boolean
 }
 
 function scopeLabel(scope: BeatBanditBatchScope): string {
@@ -47,6 +52,9 @@ export function BeatBanditBatchGenerateModal({
   onStart,
   onCancel,
   onRetryFailed,
+  settings,
+  onSettingsChange,
+  forceApiGenerations,
 }: BeatBanditBatchGenerateModalProps) {
   if (!open) return null
 
@@ -115,6 +123,18 @@ export function BeatBanditBatchGenerateModal({
               )
             })}
           </div>
+
+          {settings && onSettingsChange && status !== 'running' && (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4 [&_select]:h-8 [&_select]:text-xs [&_select]:py-1 [&_label]:text-[10px] [&_label]:mb-1">
+              <div className="mb-3 text-xs font-semibold text-zinc-300">Generation Settings</div>
+              <SettingsPanel
+                settings={settings}
+                onSettingsChange={onSettingsChange}
+                mode="text-to-video"
+                forceApiGenerations={forceApiGenerations}
+              />
+            </div>
+          )}
 
           <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
             <div className="flex items-start justify-between gap-4">
@@ -206,7 +226,7 @@ export function BeatBanditBatchGenerateModal({
 
         <div className="flex items-center justify-between gap-3 border-t border-zinc-800 px-6 py-4">
           <div className="text-xs text-zinc-500">
-            Imported BeatBandit image shots are processed one at a time with their saved generation settings.
+            Shots are processed one at a time using the settings above. Per-shot prompts and durations are preserved.
           </div>
           <div className="flex items-center gap-2">
             {status === 'running' ? (
