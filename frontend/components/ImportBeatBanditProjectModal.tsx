@@ -64,7 +64,7 @@ export function ImportBeatBanditProjectModal({
                 ))}
               </select>
               <p className="text-xs text-zinc-400 mt-2">
-                Each shot will be placed on `V1` through `V{laneCount}` so batch generation can create that many alternatives per shot.
+                Each shot is repeated {laneCount} time{laneCount === 1 ? '' : 's'} in sequence on V1 so batch generation can create alternatives to compare side by side.
               </p>
             </div>
 
